@@ -1,0 +1,20 @@
+# User Data (Private)
+input/*
+output/*
+!input/.gitkeep
+!output/.gitkeep
+
+# Sensitive Config (TOKENS)
+config.json
+.env
+
+# Logs and Debug
+debug_log.txt
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/

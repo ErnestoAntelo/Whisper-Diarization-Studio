@@ -1,0 +1,9 @@
+openai-whisper
+pyannote.audio
+torch
+torchaudio
+customtkinter
+pygame
+psutil
+packaging
+huggingface_hub
