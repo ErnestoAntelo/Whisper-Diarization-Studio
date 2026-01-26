@@ -41,13 +41,10 @@ This application was engineered to handle these specific challenges on consumer 
     *   *Tip: You don't need to rename them. Just drop them in.*
 
 ### 🖥️ Step 2: Open the App
-1.  Open a terminal in the folder (Right click -> Open in Terminal).
-2.  Type headers and hit Enter:
-    ```bash
-    python src/gui_app.py
-    ```
+1.  **Double-click `run_portable.bat`**.
+2.  The script will check dependencies and fix any version issues (like Numpy 2.0).
 3.  The interface will open.
-4.  **IMPORTANT:** Look at the list "Archivos Detectados". **You must manually check ☑️ the box next to the files you want to transcribe.** If you don't check them, nothing happens!
+4.  **IMPORTANT:** Look at the list "Archivos Detectados". **You must manually check ☑️ the box next to the files you want to transcribe.**
 
 ### ⚙️ Step 3: Configure & Run
 1.  **Paste Token**: Paste your HuggingFace Token in the "HuggingFace Token" box.
