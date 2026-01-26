@@ -10,7 +10,7 @@ if not exist "%VENV_DIR%" (
 
 echo [INFO] Verificando dependencias (numpy 1.26 fixed)...
 %VENV_DIR%\Scripts\pip install --upgrade pip
-%VENV_DIR%\Scripts\pip install -r requirements.txt
+%VENV_DIR%\Scripts\pip install --upgrade -r requirements.txt
 
 :START_APP
 echo [INFO] Iniciando App...
