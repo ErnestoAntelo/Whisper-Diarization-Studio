@@ -3,12 +3,12 @@ setlocal
 
 set VENV_DIR=.venv
 
-if exist "%VENV_DIR%" goto :START_APP
+if not exist "%VENV_DIR%" (
+    echo [INFO] Creando entorno virtual...
+    python -m venv %VENV_DIR%
+)
 
-echo [INFO] Creando entorno virtual...
-python -m venv %VENV_DIR%
-
-echo [INFO] Instalando dependencias (numpy 1.26 fixed)...
+echo [INFO] Verificando dependencias (numpy 1.26 fixed)...
 %VENV_DIR%\Scripts\pip install --upgrade pip
 %VENV_DIR%\Scripts\pip install -r requirements.txt
 
