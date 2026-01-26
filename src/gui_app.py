@@ -13,6 +13,7 @@ try:
     import whisper
 except ImportError:
     sys.path.append(str(Path(__file__).parent))
+    from main import setup_device, transcribe_file
     import whisper
     import torch
 
