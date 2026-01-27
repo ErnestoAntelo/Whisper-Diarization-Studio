@@ -41,8 +41,8 @@ This application was engineered to handle these specific challenges on consumer 
     *   *Tip: You don't need to rename them. Just drop them in.*
 
 ### 🖥️ Step 2: Open the App
-1.  **Double-click `run_portable.bat`**.
-2.  The script will check dependencies and fix any version issues (like Numpy 2.0).
+1.  **Double-click `start.bat`**.
+2.  The script will automatically set up the environment (installing GPU drivers if needed) and launch the app.
 3.  The interface will open.
 4.  **IMPORTANT:** Look at the list "Archivos Detectados". **You must manually check ☑️ the box next to the files you want to transcribe.**
 
