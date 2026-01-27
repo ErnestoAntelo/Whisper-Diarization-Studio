@@ -78,18 +78,26 @@ When processing finishes, the specific Editor window works.
     *   Download [FFmpeg Essentials](https://www.gyan.dev/ffmpeg/builds/).
     *   Extract and add output `bin` folder to Windows PATH.
 
-### 1. Clone & Install
+### 1. Clone & Run
 ```bash
 git clone https://github.com/ErnestoAntelo/Whisper-Diarization-Studio.git
 cd Whisper-Diarization-Studio
-pip install -r requirements.txt
+
+# Run the auto-installer
+start.bat
 ```
 
-### 2. GPU Setup (Optional but Recommended)
-For NVIDIA GPUs, install CUDA-enabled PyTorch:
+*   The script executes all necessary commands: creating virtualenv, installing generic dependencies, and setting up **NVIDIA CUDA** drivers for GPU acceleration.
+
+### 2. Manual Installation (Only if start.bat fails)
+If you prefer to manage your own environment:
 ```bash
-pip uninstall torch torchaudio
-pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+python -m venv .venv
+.venv\Scripts\activate
+# Install CUDA Torch (Critical for GPU)
+pip install torch==2.0.1+cu118 torchaudio==2.0.2+cu118 --index-url https://download.pytorch.org/whl/cu118
+pip install -r requirements.txt
+python src/gui_app.py
 ```
 
 ### 3. Pyannote Token
