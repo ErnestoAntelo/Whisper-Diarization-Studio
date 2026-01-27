@@ -12,6 +12,9 @@ python -m venv %VENV_DIR%
 echo [INFO] Actualizando PIP al maximo...
 %VENV_DIR%\Scripts\python.exe -m pip install --upgrade pip
 
+echo [INFO] Instalando PyTorch con CUDA (GPU Support)...
+%VENV_DIR%\Scripts\pip install torch==2.0.1+cu118 torchaudio==2.0.2+cu118 --index-url https://download.pytorch.org/whl/cu118
+
 echo [INFO] Instalando versiones ESTABLES...
 %VENV_DIR%\Scripts\pip install -r requirements.txt
 
