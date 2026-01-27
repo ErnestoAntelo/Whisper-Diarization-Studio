@@ -19,16 +19,35 @@ def _patched_hub_download(*args, **kwargs):
     return _original_hub_download(*args, **kwargs)
 huggingface_hub.hf_hub_download = _patched_hub_download
 
-# MONKEY PATCH 2: FORCE PYANNOTE FALLBACK (Disable AudioDecoder issues)
-# This prevents "name 'AudioDecoder' is not defined" or "operator torchvision::nms" conflicts
+# MONKEY PATCH 2: FORCE PYANNOTE COMPATIBILITY WITH TORCH 2.1+
+# Pyannote using old 'torchaudio.backend' which was removed in 2.1
+import torchaudio
+if not hasattr(torchaudio, "backend"):
+    # Create a dummy backend module so pyannote doesn't crash on import
+    import types
+    torchaudio.backend = types.ModuleType("backend")
+    torchaudio.backend.common = types.ModuleType("common")
+    # Mock AudioMetaData
+    class AudioMetaData:
+        def __init__(self, sample_rate, num_frames, num_channels, bits_per_sample, encoding):
+            self.sample_rate = sample_rate
+            self.num_frames = num_frames
+            self.num_channels = num_channels
+            self.bits_per_sample = bits_per_sample
+            self.encoding = encoding
+    torchaudio.backend.common.AudioMetaData = AudioMetaData
+
 try:
     import pyannote.audio.core.io
     pyannote.audio.core.io.AudioDecoder = None
 except ImportError:
     pass
 
-# Suppress pyannote warnings
+# Suppress pyannote/speechbrain warnings
 warnings.filterwarnings("ignore")
+# Specific noise from speechbrain about torchaudio backend
+warnings.filterwarnings("ignore", message="This version of torchaudio is old")
+warnings.filterwarnings("ignore", module="speechbrain")
 
 def setup_device(force_cpu=False):
     if force_cpu:
