@@ -96,11 +96,13 @@ class App(ctk.CTk):
         for widget in self.scrollable_file_list.winfo_children():
             widget.destroy()
         self.file_checkboxes = []
-        ctk.CTkLabel(self.scrollable_file_list, text="Selecciona tus audios desde cualquier carpeta.",
+        ctk.CTkLabel(self.scrollable_file_list, text="Todavía no has añadido audios.",
                      font=ctk.CTkFont(size=17), text_color="#B5C4D0").pack(pady=(24, 6))
-        ctk.CTkLabel(self.scrollable_file_list, text="MP3, M4A, WAV, OGG, FLAC y OPUS · No hace falta moverlos ni copiarlos.",
+        ctk.CTkLabel(self.scrollable_file_list, text="Pulsa Añadir audio arriba. Si ya tienes el texto, pulsa Abrir editor.",
                      text_color="#9DAFBE").pack(pady=(0, 20))
         self.lbl_file_count.configure(text="Audios")
+        if hasattr(self, "btn_start"):
+            self.update_start_button()
 
     def load_config(self):
         config_path = Path(__file__).parent.parent / "config.json"
@@ -157,6 +159,7 @@ class App(ctk.CTk):
             self.output_dir = Path(d)
             self.entry_output.delete(0, "end")
             self.entry_output.insert(0, d)
+            self.render_audio_files({path for path, chk in self.file_checkboxes if chk.get() == 1})
 
     def apply_gpu_profile(self):
         self.option_model.set("medium")
@@ -172,24 +175,55 @@ class App(ctk.CTk):
             filetypes=[("Audio", "*.mp3 *.m4a *.wav *.ogg *.flac *.opus")])
         self.add_paths(paths)
 
+    def transcript_for(self, audio):
+        root = Path(self.entry_output.get())
+        return next((p for p in [root / audio.stem / (audio.stem + ".json"),
+                                root / (audio.stem + ".json")] if p.is_file()), None)
+
+    def update_start_button(self):
+        if hasattr(self, "worker_thread") and self.worker_thread.is_alive():
+            return
+        count = sum(chk.get() == 1 for _, chk in self.file_checkboxes)
+        self.btn_start.configure(state="normal" if count else "disabled",
+                                 text=f"Transcribir {count} audios" if count > 1 else "Transcribir audio")
+
+    def render_audio_files(self, selected_paths):
+        paths = [path for path, _ in self.file_checkboxes]
+        for widget in self.scrollable_file_list.winfo_children():
+            widget.destroy()
+        self.file_checkboxes = []
+        busy = hasattr(self, "worker_thread") and self.worker_thread.is_alive()
+        for path in paths:
+            row = ctk.CTkFrame(self.scrollable_file_list, fg_color="transparent")
+            row.pack(fill="x", padx=4, pady=6)
+            row.grid_columnconfigure(0, weight=1)
+            chk = ctk.CTkCheckBox(row, text=path.name, command=self.update_start_button)
+            chk.grid(row=0, column=0, sticky="w", padx=6)
+            if path in selected_paths:
+                chk.select()
+            self.file_checkboxes.append((path, chk))
+            available = self.transcript_for(path) is not None
+            ctk.CTkLabel(row, text="Texto guardado" if available else "Pendiente de transcribir",
+                         text_color="#9DAFBE").grid(row=1, column=0, sticky="w", padx=36)
+            if available:
+                ctk.CTkButton(row, text="Abrir editor", width=125, state="disabled" if busy else "normal",
+                              command=lambda audio=path: self.open_editor_dialog(str(audio))).grid(row=0, column=1, rowspan=2, padx=6)
+        self.lbl_file_count.configure(text=f"Audios · {len(paths)}")
+        self.update_start_button()
+
     def add_paths(self, paths):
         if not paths:
             return
-        for widget in self.scrollable_file_list.winfo_children():
-            if isinstance(widget, ctk.CTkLabel):
-                widget.destroy()
-        existing = {path.resolve(): chk for path, chk in self.file_checkboxes}
+        selected = {path for path, chk in self.file_checkboxes if chk.get() == 1}
+        existing = {path for path, _ in self.file_checkboxes}
         for name in paths:
             path = Path(name).resolve()
             self.input_dir = path.parent
-            if path in existing:
-                existing[path].select()
-                continue
-            chk = ctk.CTkCheckBox(self.scrollable_file_list, text=path.name)
-            chk.pack(anchor="w", padx=5, pady=2)
-            chk.select()
-            self.file_checkboxes.append((path, chk))
-        self.lbl_file_count.configure(text=f"Audios · {len(self.file_checkboxes)}")
+            selected.add(path)
+            if path not in existing:
+                self.file_checkboxes.append((path, None))
+                existing.add(path)
+        self.render_audio_files(selected)
 
     def open_output_folder(self):
         path = Path(self.entry_output.get())
@@ -207,32 +241,11 @@ class App(ctk.CTk):
                 chk.deselect()
 
     def refresh_file_list(self):
-        # Clear existing
-        for widget in self.scrollable_file_list.winfo_children():
-            widget.destroy()
-
-        self.file_checkboxes = [] # Store references
-
-        # Find files
         path = Path(self.entry_input.get())
-        if not path.exists():
-            return
-
-        audio_extensions = {".m4a", ".mp3", ".opus", ".wav", ".flac", ".ogg"}
-        files = [f for f in path.iterdir() if f.suffix.lower() in audio_extensions and f.is_file()]
-
-        if not files:
-            label = ctk.CTkLabel(self.scrollable_file_list, text="(No se encontraron archivos de audio)")
-            label.pack(anchor="w")
-        
-        for f in files:
-            chk = ctk.CTkCheckBox(self.scrollable_file_list, text=f.name)
-            chk.pack(anchor="w", padx=5, pady=2)
-            chk.select()
-            
-            # Store tuple (path, checkbox_widget)
-            self.file_checkboxes.append((f, chk))
-        self.lbl_file_count.configure(text=f"Audios · {len(self.file_checkboxes)}")
+        self.clear_audio_files()
+        if path.is_dir():
+            extensions = {".m4a", ".mp3", ".opus", ".wav", ".flac", ".ogg"}
+            self.add_paths(sorted(f for f in path.iterdir() if f.is_file() and f.suffix.lower() in extensions))
 
     def start_thread(self):
         value = self.entry_speakers.get().strip()
@@ -249,6 +262,7 @@ class App(ctk.CTk):
             return
         self.cancel_event.clear()
         self.btn_cancel.configure(state="normal")
+        self.btn_cancel.grid(row=0, column=1, padx=(12, 0))
         self.btn_start.configure(state="disabled", text="Procesando...")
         self.btn_open_editor.configure(state="disabled")
         settings = self.collect_settings()
@@ -270,19 +284,21 @@ class App(ctk.CTk):
         sys.stdout, sys.stderr = sys.__stdout__, sys.__stderr__
         self.destroy()
 
-    def open_editor_dialog(self):
+    def open_editor_dialog(self, audio_file=None):
+        if hasattr(self, "worker_thread") and self.worker_thread.is_alive():
+            self.label_status.configure(text="Espera a que termine el proceso para editar el resultado.", text_color="orange")
+            return
         selected = [p for p, chk in self.file_checkboxes if chk.get() == 1]
-        audio_file = None
-        if len(selected) == 1:
+        if audio_file is None and len(selected) == 1:
             path = selected[0]
             root = Path(self.entry_output.get())
             if (root / path.stem / (path.stem + ".json")).exists() or (root / (path.stem + ".json")).exists():
                 audio_file = str(path)
         if audio_file is None:
             audio_file = filedialog.askopenfilename(
-                initialdir=self.input_dir,
-                title="Abre una transcripción JSON o su audio original",
-                filetypes=[("Audio o transcripción", "*.json *.mp3 *.m4a *.wav *.ogg *.flac *.opus")]
+                initialdir=self.entry_output.get(),
+                title="Abrir editor: elige una transcripción guardada",
+                filetypes=[("Transcripción guardada", "*.json"), ("Audio original", "*.mp3 *.m4a *.wav *.ogg *.flac *.opus")]
             )
         if not audio_file:
             return
@@ -290,13 +306,14 @@ class App(ctk.CTk):
         audio_path = Path(audio_file)
         if audio_path.suffix.lower() == ".json":
             json_path = audio_path
-            original = filedialog.askopenfilename(
-                initialdir=self.input_dir, title="Selecciona el audio de esta transcripción",
-                filetypes=[("Audio", "*.mp3 *.m4a *.wav *.ogg *.flac *.opus")])
+            original = self.find_transcript_audio(json_path)
+            if original is None:
+                original = filedialog.askopenfilename(
+                    initialdir=self.input_dir, title="Selecciona su audio para escucharlo en el editor",
+                    filetypes=[("Audio", "*.mp3 *.m4a *.wav *.ogg *.flac *.opus")])
             if not original:
                 return
-            from editor import EditorWindow
-            EditorWindow(self, Path(original), json_path)
+            self.launch_editor(Path(original), json_path)
             return
         
         # Look for JSON in output dir
@@ -316,7 +333,21 @@ class App(ctk.CTk):
             print(f"Buscado en:\n1. {json_path_subdir}\n2. {json_path_flat}")
             return
             
-        # Open Editor
+        self.launch_editor(audio_path, json_path)
+
+    def find_transcript_audio(self, json_path):
+        extensions = (".mp3", ".m4a", ".wav", ".ogg", ".flac", ".opus")
+        for path, _ in self.file_checkboxes:
+            if path.stem == json_path.stem and path.is_file():
+                return path
+        for folder in (json_path.parent, self.input_dir, Path.home() / "Downloads"):
+            for extension in extensions:
+                candidate = folder / (json_path.stem + extension)
+                if candidate.is_file():
+                    return candidate
+        return None
+
+    def launch_editor(self, audio_path, json_path):
         try:
             from editor import EditorWindow
             EditorWindow(self, audio_path, json_path)
@@ -491,9 +522,14 @@ class App(ctk.CTk):
             self.post_reset()
 
     def reset_ui(self):
+        if hasattr(self, "worker_thread") and self.worker_thread.is_alive():
+            self.after(100, self.reset_ui)
+            return
         self.btn_cancel.configure(state="disabled")
+        self.btn_cancel.grid_remove()
         self.btn_open_editor.configure(state="normal")
-        self.btn_start.configure(state="normal", text="Transcribir e identificar hablantes")
+        self.render_audio_files({path for path, chk in self.file_checkboxes if chk.get() == 1})
+        self.update_start_button()
         # Don't convert status back to "Ready" immediately so user can see result
         # self.label_status.configure(text="Listo para empezar", text_color="gray")
 

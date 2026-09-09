@@ -51,6 +51,40 @@ class OptimizationsTest(unittest.TestCase):
         self.assertEqual([(s["start"], s["end"]) for s in segments], [(0, 1), (1, 2)])
         text.get.assert_not_called()
 
+    def test_editor_row_opens_its_audio_even_with_multiple_selected(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            audio = root / "chosen.mp3"
+            transcript = root / "chosen" / "chosen.json"
+            transcript.parent.mkdir()
+            transcript.write_text("[]", encoding="utf-8")
+            selected = Mock()
+            selected.get.return_value = 1
+            output = Mock()
+            output.get.return_value = folder
+            app = SimpleNamespace(file_checkboxes=[(root / "other.mp3", selected), (audio, selected)],
+                                  entry_output=output, launch_editor=Mock())
+            with patch("gui_app.filedialog.askopenfilename") as picker:
+                App.open_editor_dialog(app, str(audio))
+                picker.assert_not_called()
+            app.launch_editor.assert_called_once_with(audio, transcript)
+
+    def test_editor_finds_original_audio_without_second_picker(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            audio = root / "saved.mp3"
+            audio.touch()
+            transcript = root / "saved.json"
+            output = Mock()
+            output.get.return_value = folder
+            app = SimpleNamespace(file_checkboxes=[], input_dir=root, entry_output=output,
+                                  launch_editor=Mock())
+            app.find_transcript_audio = lambda path: App.find_transcript_audio(app, path)
+            with patch("gui_app.filedialog.askopenfilename", return_value=str(transcript)) as picker:
+                App.open_editor_dialog(app)
+                self.assertEqual(picker.call_count, 1)
+            app.launch_editor.assert_called_once_with(audio, transcript)
+
     def test_legacy_gpu_diarization_is_rejected(self):
         with self.assertRaises(ValueError):
             main.diarize_audio("sample.wav", "test", device="cuda", pipeline=Mock())

@@ -18,15 +18,16 @@ Powered by **OpenAI Whisper** (transcription) and **Pyannote Audio** (diarizatio
 
 ### Uso rápido y perfil para RTX 4050 de 6 GB
 
-- Abre `start.bat` y pulsa **Añadir audios…** para seleccionar archivos de cualquier carpeta. Quedan marcados automáticamente y no necesitas copiarlos a `input`.
-- **Perfil portátil** selecciona Whisper `medium` y Community-1 con **GPU rápida**, en fases separadas. Community-1 usa un proceso independiente, lotes de ocho, cuDNN activado (sin búsqueda de algoritmos) y pausas de 30 ms entre lotes. **GPU compatible** conserva el perfil anterior sin cuDNN y con pausas mayores; es bastante más lento. **Diarización en CPU** permite elegir la alternativa sin CUDA.
+- Abre `start.bat` y pulsa **Añadir audio…** para seleccionar archivos de cualquier carpeta. Quedan marcados automáticamente y no necesitas copiarlos a `input`.
+- En **Ajustes**, **Perfil portátil** selecciona Whisper `medium` y Community-1 con **GPU rápida**, en fases separadas. Community-1 usa un proceso independiente, lotes de ocho, cuDNN activado (sin búsqueda de algoritmos) y pausas de 30 ms entre lotes. **GPU compatible** conserva el perfil anterior sin cuDNN y con pausas mayores; es bastante más lento. **Diarización en CPU** permite elegir la alternativa sin CUDA.
 - **Hablantes** permite indicar una cantidad conocida (por ejemplo, `2` para una entrevista); vacío mantiene la detección automática. El número se aplica a todos los audios seleccionados.
 - El worker limita el cálculo CPU a dos hilos y al 6% mediante un Job Object de Windows. En GPU se limita el asignador de Torch al 45% de VRAM y se comprueban lecturas de NVIDIA cada dos segundos. A partir de 75 °C o 70 W se espacian más los lotes. A 78 °C u 80 W se **pausa entre lotes conservando el progreso en memoria**, y se reanuda automáticamente al bajar a 74 °C y 65 W. Una lectura ausente también pausa hasta recuperar telemetría. La interfaz muestra la pausa y permite cancelar. Son medidas conservadoras del programa, no límites eléctricos ni una garantía contra reinicios.
-- **Reutilizar texto guardado** recupera el JSON sin cargar Whisper cuando es válido. Con token configurado vuelve a ejecutar la diarización y puede reemplazar los nombres de hablantes editados. Para revisar un trabajo terminado, usa **Abrir transcripción…**.
-- **Abrir transcripción…** abre directamente el resultado si hay un único audio seleccionado que ya tenga JSON. También permite elegir el audio original o un JSON; si eliges JSON, después seleccionas su audio. **Ver resultados** abre la carpeta de salida.
-- La pantalla empieza con una lista vacía. **Añadir carpeta…** agrega sus audios a la selección; **Vaciar lista** solo quita la selección de la pantalla, no borra archivos.
+- **Reutilizar texto guardado** recupera el JSON sin cargar Whisper cuando es válido. Con token configurado vuelve a ejecutar la diarización y puede reemplazar los nombres de hablantes editados. Para revisar un trabajo terminado, usa **Abrir editor…**.
+- **Abrir editor…** abre directamente el resultado si hay un único audio seleccionado que ya tenga JSON. También permite elegir una transcripción guardada; busca su audio por nombre en la carpeta del texto, la última carpeta de audio y Descargas, y lo solicita si no lo encuentra. Cada audio con texto guardado tiene su propio botón **Abrir editor**. El menú **•••** permite abrir la carpeta de resultados.
+- La pantalla empieza con una lista vacía. El menú **•••** permite añadir una carpeta o quitar todos los audios de la lista sin borrar archivos.
 - El editor agrupa las frases consecutivas del mismo hablante y separa las pausas de más de tres segundos. **Separar todo** muestra todas las frases; **Editar frases** separa solo un bloque para corregir su texto. **Agrupar por hablante** vuelve a la lectura por párrafos. El JSON conserva las frases y sus tiempos originales; al guardar, el TXT refleja la vista elegida.
-- **Ctrl+O** abre el selector de audios y **Ctrl+S** guarda desde el editor. Al iniciar un trabajo se recuerdan la última carpeta de audio y el destino de resultados.
+- La pantalla principal separa **Nueva transcripción** de **Revisar una transcripción**. El modelo, idioma, token, GPU y carpeta de destino están en **Ajustes**; el registro se despliega con **Ver detalles**. **Cancelar** aparece solo durante el procesamiento.
+- **Ctrl+E** abre el editor. **Ctrl+O** abre el selector de audios y **Ctrl+S** guarda desde el editor. Al iniciar un trabajo se recuerdan la última carpeta de audio y el destino de resultados.
 
 Equipo comprobado: Intel i9-13980HX, aproximadamente 64 GB de RAM, RTX 4050 Laptop de 6 GB, driver NVIDIA 610.88, Python 3.11.9 y FFmpeg 7.0.1. **GPU rápida completó la diarización del audio de 22:40 en 83,81 s**, incluyendo el arranque del worker (72,30 s de inferencia). Es 6,94 veces más rápido que los 581,64 s del perfil compatible. Los 320 turnos de diarización coinciden exactamente entre ambos resultados. Máximos muestreados de la prueba rápida: **68 °C / 69,73 W**, 436,4 MB de asignación CUDA de Torch y 1.729,7 MB de RAM del worker y sus hijos. Se conservan las 326 frases y sus tiempos; dos hablantes y una frase sin asignar. Se reutilizó el texto ya generado por Whisper. La primera ruta antigua sufrió un reinicio; la nueva prueba no demuestra que su causa esté reparada. Véase [diagnóstico y validación](docs/DIAGNOSTICO_Y_MODELOS.md).
 
@@ -64,7 +65,7 @@ Keep your audio files in their current folder. Accepted formats: `.mp3`, `.wav`,
 1.  **Double-click `start.bat`**.
 2.  The script will automatically set up the environment (installing Python dependencies if needed) and launch the app.
 3.  The interface will open.
-4.  Click **Añadir audios…** to select files, or **Añadir carpeta…** to add a folder. Added files are selected automatically.
+4.  Click **Añadir audio…** to select files, or **Añadir carpeta…** to add a folder. Added files are selected automatically.
 
 ### ⚙️ Step 3: Configure & Run
 1.  **Paste Token**: Paste your HuggingFace Token in the "HuggingFace Token" box.
@@ -72,7 +73,7 @@ Keep your audio files in their current folder. Accepted formats: `.mp3`, `.wav`,
     *   **Default**: Whisper and Community-1 use GPU in separate phases. Community-1 uses small batches and a monitored compatibility profile.
     *   **Diarización en CPU** selects the slower CPU alternative.
     *   **Resume**: Check **Reutilizar texto guardado** to recover a saved transcription and run speaker identification again.
-    *   **Review**: Use **Abrir transcripción…** to edit an existing result without processing it again.
+    *   **Review**: Use **Abrir editor…** to edit an existing result without processing it again.
 3.  Click **Transcribir e identificar hablantes**. Progress appears in the log; **Cancelar** stops diarization.
 
 ### ✏️ Step 4: The Editor (Magic Time)
