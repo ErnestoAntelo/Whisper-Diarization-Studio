@@ -74,6 +74,20 @@ def open_library(app):
             projects = list_transcripts(selected)
             query.delete(0, "end")
             render()
+    def external_project():
+        selected = filedialog.askopenfilename(parent=window, title="Abrir proyecto editable", filetypes=[("Proyecto editable", "*.json")])
+        if not selected:
+            return
+        try:
+            data = json.loads(Path(selected).read_text(encoding="utf-8"))
+            if not isinstance(data, list) or not data or not all(isinstance(s, dict) and isinstance(s.get("text"), str) and isinstance(s.get("start"), (int, float)) and isinstance(s.get("end"), (int, float)) for s in data):
+                raise ValueError("El archivo no es un proyecto de transcripción editable.")
+            window.destroy()
+            app.open_saved_transcript(Path(selected))
+        except (OSError, ValueError) as error:
+            from tkinter import messagebox
+            messagebox.showerror("No se puede abrir", str(error), parent=window)
+    ctk.CTkButton(window, text="Abrir proyecto externo…", fg_color="transparent", command=external_project).pack(anchor="w", padx=24, pady=(0, 4))
     query.bind("<KeyRelease>", render)
     ctk.CTkButton(window, text="Buscar en otra carpeta…", fg_color="transparent", command=folder).pack(anchor="w", padx=24, pady=(0, 16))
     render()

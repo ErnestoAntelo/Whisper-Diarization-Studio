@@ -21,18 +21,18 @@ def build_main_ui(app, redirect_text):
     header = ctk.CTkFrame(app, fg_color="transparent")
     header.grid(row=0, column=0, sticky="ew", padx=28, pady=(24, 16))
     ctk.CTkLabel(header, text="Whisper Studio", font=ctk.CTkFont(size=26, weight="bold")).pack(anchor="w")
-    ctk.CTkLabel(header, text="Transcribe un audio o continúa con un texto guardado.", text_color="#9DAFBE").pack(anchor="w")
+    ctk.CTkLabel(header, text="Transcribe audio o vídeo, o continúa con un texto guardado.", text_color="#9DAFBE").pack(anchor="w")
 
     choices = ctk.CTkFrame(app, fg_color="transparent")
     choices.grid(row=1, column=0, sticky="ew", padx=28, pady=(0, 20))
     choices.grid_columnconfigure((0, 1), weight=1, uniform="choices")
-    for column, title, description in [(0, "Nueva transcripción", "Selecciona un audio de cualquier carpeta."),
+    for column, title, description in [(0, "Nueva transcripción", "Selecciona audio o vídeo de cualquier carpeta."),
                                        (1, "Revisar una transcripción", "Lee, corrige y escucha un trabajo guardado.")]:
         card = ctk.CTkFrame(choices, fg_color="#1C2732", corner_radius=12)
         card.grid(row=0, column=column, sticky="nsew", padx=(0, 8) if column == 0 else (8, 0))
         ctk.CTkLabel(card, text=title, font=ctk.CTkFont(size=18, weight="bold")).pack(anchor="w", padx=20, pady=(18, 4))
         ctk.CTkLabel(card, text=description, text_color="#A9B9C6").pack(anchor="w", padx=20)
-        button = ctk.CTkButton(card, text="Añadir audio…" if column == 0 else "Abrir editor…",
+        button = ctk.CTkButton(card, text="Añadir archivo…" if column == 0 else "Abrir editor…",
                               height=42, font=ctk.CTkFont(size=15, weight="bold"),
                               command=app.add_audio_files if column == 0 else app.open_editor_dialog)
         button.pack(fill="x", padx=20, pady=(16, 20))
@@ -45,7 +45,7 @@ def build_main_ui(app, redirect_text):
     files.grid_rowconfigure(1, weight=1)
     toolbar = ctk.CTkFrame(files, fg_color="transparent")
     toolbar.grid(row=0, column=0, sticky="ew", padx=16, pady=10)
-    app.lbl_file_count = ctk.CTkLabel(toolbar, text="Audios", font=ctk.CTkFont(size=16, weight="bold"))
+    app.lbl_file_count = ctk.CTkLabel(toolbar, text="Archivos", font=ctk.CTkFont(size=16, weight="bold"))
     app.lbl_file_count.pack(side="left")
     menu = tk.Menu(app, tearoff=False)
     menu.add_command(label="Añadir una carpeta…", command=app.browse_input)
@@ -120,12 +120,12 @@ def build_main_ui(app, redirect_text):
     actions = ctk.CTkFrame(app, fg_color="transparent")
     actions.grid(row=3, column=0, sticky="ew", padx=28, pady=(0, 8))
     actions.grid_columnconfigure(0, weight=1)
-    app.btn_start = ctk.CTkButton(actions, text="Transcribir audio", state="disabled", height=44,
+    app.btn_start = ctk.CTkButton(actions, text="Transcribir archivo", state="disabled", height=44,
                                 font=ctk.CTkFont(size=15, weight="bold"), command=app.start_thread)
     app.btn_start.grid(row=0, column=0, sticky="ew")
     app.btn_cancel = ctk.CTkButton(actions, text="Cancelar", width=100, height=44, state="disabled",
                                  fg_color="#803C3C", command=app.cancel_process)
-    app.label_status = ctk.CTkLabel(app, text="Para empezar, añade un audio o abre el editor de un trabajo guardado.",
+    app.label_status = ctk.CTkLabel(app, text="Para empezar, añade audio o vídeo o abre el editor de un trabajo guardado.",
                                   text_color="#9DAFBE", anchor="w", wraplength=760)
     app.label_status.grid(row=4, column=0, sticky="ew", padx=28, pady=(0, 6))
     footer = ctk.CTkFrame(app, fg_color="transparent")

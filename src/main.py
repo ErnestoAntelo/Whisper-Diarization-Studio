@@ -230,27 +230,13 @@ def save_transcript(segments, output_path):
     """
     Saves segments to file with proper formatting AND saves a .json copy for the Editor.
     """
-    # 1. Save Human-Readable TXT
-    with open(output_path, "w", encoding="utf-8") as f:
-        for seg in segments:
-            start = time.strftime('%H:%M:%S', time.gmtime(seg['start']))
-            end = time.strftime('%H:%M:%S', time.gmtime(seg['end']))
-            text = seg['text'].strip()
-            
-            if 'speaker' in seg:
-                f.write(f"[{start} --> {end}] {seg['speaker']}: {text}\n")
-            else:
-                f.write(f"[{start} --> {end}]  {text}\n")
-    
-    # 2. Save Machine-Readable JSON (for Editor)
-    json_path = output_path.with_suffix(".json")
-    try:
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(segments, f, indent=4, ensure_ascii=False)
-    except Exception as e:
-        print(f"⚠️ Error guardando JSON: {e}")
-
+    from transcript_export import atomic_write, render_export
+    output_path = Path(output_path)
+    # Preserve the editable checkpoint first; exports can always be regenerated.
+    atomic_write(output_path.with_suffix(".json"), render_export(segments, "json"))
+    atomic_write(output_path, render_export(segments, "txt"))
     print(f"✅ Guardado en: {output_path.name} (y .json)")
+
 
 def transcribe_file(model, audio_path, output_path, language="es", fp16=True, verbose=True, hf_token=None, reuse=False):
     try:
@@ -357,7 +343,8 @@ def main():
         print(f"❌ Error cargando modelo: {e}")
         return
 
-    audio_extensions = {".m4a", ".mp3", ".opus", ".wav", ".flac", ".ogg"}
+    from media_files import MEDIA_EXTENSIONS
+    audio_extensions = MEDIA_EXTENSIONS
     audio_files = [f for f in input_dir.iterdir() if f.suffix.lower() in audio_extensions]
 
     if not audio_files:

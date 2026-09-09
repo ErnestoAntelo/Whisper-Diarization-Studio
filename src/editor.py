@@ -95,7 +95,7 @@ class EditorWindow(ctk.CTkToplevel):
                      startupinfo = subprocess.STARTUPINFO()
                      startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 
-                subprocess.run(["ffmpeg", "-y", "-i", self.audio_path, "-ac", "2", "-ar", "44100", temp_wav_path], 
+                subprocess.run(["ffmpeg", "-nostdin", "-y", "-i", self.audio_path, "-vn", "-ac", "2", "-ar", "44100", temp_wav_path],
                                check=True, 
                                stdout=subprocess.DEVNULL, 
                                stderr=subprocess.DEVNULL, 
@@ -240,8 +240,12 @@ class EditorWindow(ctk.CTkToplevel):
         top_frame = ctk.CTkFrame(self)
         top_frame.pack(fill="x", padx=10, pady=10)
         
-        ctk.CTkButton(top_frame, text="GUARDAR CAMBIOS", fg_color="green", command=self.save_changes).pack(side="right", padx=10)
+        ctk.CTkButton(top_frame, text="Guardar", fg_color="green", command=self.save_changes).pack(side="right", padx=10)
         
+        from transcript_export import open_export_dialog
+        ctk.CTkButton(top_frame, text="Exportar…", width=110, command=lambda: open_export_dialog(self)).pack(side="right", padx=4)
+        self.bind("<Control-Shift-S>", lambda event: open_export_dialog(self))
+
         self.btn_stop = ctk.CTkButton(top_frame, text="⏹ DETENER AUDIO", fg_color="gray", command=self.stop_audio, state="disabled")
         self.btn_stop.pack(side="left", padx=10)
         
@@ -556,24 +560,7 @@ class EditorWindow(ctk.CTkToplevel):
             self.lbl_status.configure(text="Error guardando JSON", text_color="red")
             return
 
-        # 2. Save TXT (Reusing main.py logic logic or recreating here?)
-        # Recreating simple logic here to avoid importing complex main dependencies
-        # 2. Save TXT
-        try:
-            txt_path = Path(self.json_path).with_suffix(".txt")
-            with open(txt_path, "w", encoding="utf-8") as f:
-                for seg in self.display_blocks():
-                    start = time.strftime('%H:%M:%S', time.gmtime(seg['start']))
-                    end = time.strftime('%H:%M:%S', time.gmtime(seg['end']))
-                    text_content = seg['text'].strip()
-                    speaker = seg.get('speaker', 'UNKNOWN')
-                    
-                    f.write(f"[{start} --> {end}] {speaker}: {text_content}\n")
-            
-            self.lbl_status.configure(text="✅ ¡Guardado Correctamente!", text_color="green")
-            # self.segments is already up to date
-        except Exception as e:
-             self.lbl_status.configure(text=f"Error TXT: {e}", text_color="red")
+        self.lbl_status.configure(text="Proyecto guardado", text_color="green")
 
     def on_close(self):
         self.stop_audio()

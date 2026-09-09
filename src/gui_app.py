@@ -7,6 +7,7 @@ from pathlib import Path
 import time
 import torch
 from tkinter import filedialog
+from media_files import MEDIA_EXTENSIONS, media_filetypes
 
 # Import shared logic or fallback
 try:
@@ -96,11 +97,11 @@ class App(ctk.CTk):
         for widget in self.scrollable_file_list.winfo_children():
             widget.destroy()
         self.file_checkboxes = []
-        ctk.CTkLabel(self.scrollable_file_list, text="Todavía no has añadido audios.",
+        ctk.CTkLabel(self.scrollable_file_list, text="Todavía no has añadido archivos.",
                      font=ctk.CTkFont(size=17), text_color="#B5C4D0").pack(pady=(24, 6))
-        ctk.CTkLabel(self.scrollable_file_list, text="Pulsa Añadir audio arriba. Si ya tienes el texto, pulsa Abrir editor.",
+        ctk.CTkLabel(self.scrollable_file_list, text="Pulsa Añadir archivo arriba. Si ya tienes el texto, pulsa Abrir editor.",
                      text_color="#9DAFBE").pack(pady=(0, 20))
-        self.lbl_file_count.configure(text="Audios")
+        self.lbl_file_count.configure(text="Archivos")
         if hasattr(self, "btn_start"):
             self.update_start_button()
 
@@ -150,7 +151,7 @@ class App(ctk.CTk):
             self.input_dir = Path(d)
             self.entry_input.delete(0, "end")
             self.entry_input.insert(0, d)
-            extensions = {".mp3", ".m4a", ".wav", ".ogg", ".flac", ".opus"}
+            extensions = MEDIA_EXTENSIONS
             self.add_paths(sorted(p for p in Path(d).iterdir() if p.is_file() and p.suffix.lower() in extensions))
 
     def browse_output(self):
@@ -171,8 +172,8 @@ class App(ctk.CTk):
 
     def add_audio_files(self):
         paths = filedialog.askopenfilenames(
-            title="Selecciona uno o varios audios", initialdir=self.input_dir,
-            filetypes=[("Audio", "*.mp3 *.m4a *.wav *.ogg *.flac *.opus")])
+            title="Selecciona audio o vídeo", initialdir=self.input_dir,
+            filetypes=media_filetypes())
         self.add_paths(paths)
 
     def transcript_for(self, audio):
@@ -185,7 +186,7 @@ class App(ctk.CTk):
             return
         count = sum(chk.get() == 1 for _, chk in self.file_checkboxes)
         self.btn_start.configure(state="normal" if count else "disabled",
-                                 text=f"Transcribir {count} audios" if count > 1 else "Transcribir audio")
+                                 text=f"Transcribir {count} archivos" if count > 1 else "Transcribir archivo")
 
     def render_audio_files(self, selected_paths):
         paths = [path for path, _ in self.file_checkboxes]
@@ -208,7 +209,7 @@ class App(ctk.CTk):
             if available:
                 ctk.CTkButton(row, text="Abrir editor", width=125, state="disabled" if busy else "normal",
                               command=lambda audio=path: self.open_editor_dialog(str(audio))).grid(row=0, column=1, rowspan=2, padx=6)
-        self.lbl_file_count.configure(text=f"Audios · {len(paths)}")
+        self.lbl_file_count.configure(text=f"Archivos · {len(paths)}")
         self.update_start_button()
 
     def add_paths(self, paths):
@@ -244,7 +245,7 @@ class App(ctk.CTk):
         path = Path(self.entry_input.get())
         self.clear_audio_files()
         if path.is_dir():
-            extensions = {".m4a", ".mp3", ".opus", ".wav", ".flac", ".ogg"}
+            extensions = MEDIA_EXTENSIONS
             self.add_paths(sorted(f for f in path.iterdir() if f.is_file() and f.suffix.lower() in extensions))
 
     def start_thread(self):
@@ -254,7 +255,7 @@ class App(ctk.CTk):
             return
         selected = [p for p, chk in self.file_checkboxes if chk.get() == 1]
         if not selected:
-            self.label_status.configure(text="Añade y selecciona al menos un audio.", text_color="orange")
+            self.label_status.configure(text="Añade audio o vídeo para empezar.", text_color="orange")
             return
         stems = [p.stem.casefold() for p in selected]
         if len(stems) != len(set(stems)):
@@ -323,7 +324,14 @@ class App(ctk.CTk):
         self.launch_editor(self.find_transcript_audio(json_path), json_path)
 
     def find_transcript_audio(self, json_path):
-        extensions = (".mp3", ".m4a", ".wav", ".ogg", ".flac", ".opus")
+        extensions = sorted(MEDIA_EXTENSIONS)
+        try:
+            source = json.loads(json_path.with_suffix(".source.json").read_text(encoding="utf-8"))
+            original = Path(source["media_path"])
+            if original.is_file():
+                return original
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
         for path, _ in self.file_checkboxes:
             if path.stem == json_path.stem and path.is_file():
                 return path
@@ -395,12 +403,24 @@ class App(ctk.CTk):
                 
                 outfile = file_subdir / (f.stem + ".txt")
                 
+                from transcript_export import atomic_write
+                source_path = outfile.with_suffix(".source.json")
+                if source_path.exists():
+                    try:
+                        previous = json.loads(source_path.read_text(encoding="utf-8"))["media_path"]
+                        if Path(previous).resolve() != f.resolve():
+                            print(f"❌ {f.name}: ya hay otro archivo con ese nombre. Cambia el nombre o la carpeta de destino.")
+                            failures += 1
+                            continue
+                    except (OSError, ValueError, KeyError):
+                        pass
+
                 # Check exist
-                if outfile.exists() and not reuse_transcription:
+                if outfile.with_suffix(".json").exists() and not reuse_transcription:
                     print(f"⏩ {f.name} ya existe. (Si deseas reprocesar, bórralo antes).")
                     skipped += 1
                     continue
-                elif outfile.exists() and reuse_transcription:
+                elif outfile.with_suffix(".json").exists() and reuse_transcription:
                     print(f"♻️ {f.name} ya existe. Intentando REUTILIZAR...")
                 
                 # Transcribe (hf_token=None force skip internal diarization)
@@ -425,6 +445,7 @@ class App(ctk.CTk):
                     segments = transcribe_file(model, f, outfile, language=language_code, fp16=fp16, verbose=True)
                 
                 if segments is not None:
+                    atomic_write(source_path, json.dumps({"media_path": str(f.resolve())}, ensure_ascii=False))
                     transcription_results.append({
                         "file": f,
                         "outfile": outfile,
