@@ -288,34 +288,15 @@ class App(ctk.CTk):
         if hasattr(self, "worker_thread") and self.worker_thread.is_alive():
             self.label_status.configure(text="Espera a que termine el proceso para editar el resultado.", text_color="orange")
             return
-        selected = [p for p, chk in self.file_checkboxes if chk.get() == 1]
-        if audio_file is None and len(selected) == 1:
-            path = selected[0]
-            root = Path(self.entry_output.get())
-            if (root / path.stem / (path.stem + ".json")).exists() or (root / (path.stem + ".json")).exists():
-                audio_file = str(path)
         if audio_file is None:
-            audio_file = filedialog.askopenfilename(
-                initialdir=self.entry_output.get(),
-                title="Abrir editor: elige una transcripción guardada",
-                filetypes=[("Transcripción guardada", "*.json"), ("Audio original", "*.mp3 *.m4a *.wav *.ogg *.flac *.opus")]
-            )
-        if not audio_file:
+            from transcript_library import open_library
+            open_library(self)
             return
-
         audio_path = Path(audio_file)
         if audio_path.suffix.lower() == ".json":
-            json_path = audio_path
-            original = self.find_transcript_audio(json_path)
-            if original is None:
-                original = filedialog.askopenfilename(
-                    initialdir=self.input_dir, title="Selecciona su audio para escucharlo en el editor",
-                    filetypes=[("Audio", "*.mp3 *.m4a *.wav *.ogg *.flac *.opus")])
-            if not original:
-                return
-            self.launch_editor(Path(original), json_path)
+            self.open_saved_transcript(audio_path)
             return
-        
+
         # Look for JSON in output dir
         out_root = Path(self.entry_output.get())
         
@@ -335,6 +316,12 @@ class App(ctk.CTk):
             
         self.launch_editor(audio_path, json_path)
 
+    def open_saved_transcript(self, json_path):
+        if hasattr(self, "worker_thread") and self.worker_thread.is_alive():
+            self.label_status.configure(text="Espera a que termine el proceso para editar el resultado.", text_color="orange")
+            return
+        self.launch_editor(self.find_transcript_audio(json_path), json_path)
+
     def find_transcript_audio(self, json_path):
         extensions = (".mp3", ".m4a", ".wav", ".ogg", ".flac", ".opus")
         for path, _ in self.file_checkboxes:
@@ -351,7 +338,7 @@ class App(ctk.CTk):
         try:
             from editor import EditorWindow
             EditorWindow(self, audio_path, json_path)
-            self.label_status.configure(text=f"Editor abierto para {audio_path.name}", text_color="green")
+            self.label_status.configure(text=f"Editor abierto para {json_path.stem}", text_color="green")
         except Exception as e:
             print(f"Error abriendo editor: {e}")
             self.label_status.configure(text="Error abriendo editor", text_color="red")

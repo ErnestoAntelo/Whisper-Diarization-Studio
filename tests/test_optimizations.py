@@ -69,21 +69,37 @@ class OptimizationsTest(unittest.TestCase):
                 picker.assert_not_called()
             app.launch_editor.assert_called_once_with(audio, transcript)
 
-    def test_editor_finds_original_audio_without_second_picker(self):
+    def test_saved_project_opens_without_file_picker_even_without_audio(self):
+        app = SimpleNamespace(find_transcript_audio=Mock(return_value=None), launch_editor=Mock())
+        project = Path("saved.json")
+        with patch("gui_app.filedialog.askopenfilename") as picker:
+            App.open_saved_transcript(app, project)
+            picker.assert_not_called()
+        app.launch_editor.assert_called_once_with(None, project)
+
+    def test_library_lists_one_project_without_reports_or_backups(self):
+        from transcript_library import list_transcripts
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
-            audio = root / "saved.mp3"
-            audio.touch()
-            transcript = root / "saved.json"
-            output = Mock()
-            output.get.return_value = folder
-            app = SimpleNamespace(file_checkboxes=[], input_dir=root, entry_output=output,
-                                  launch_editor=Mock())
-            app.find_transcript_audio = lambda path: App.find_transcript_audio(app, path)
-            with patch("gui_app.filedialog.askopenfilename", return_value=str(transcript)) as picker:
-                App.open_editor_dialog(app)
-                self.assertEqual(picker.call_count, 1)
-            app.launch_editor.assert_called_once_with(audio, transcript)
+            project = root / "meeting"
+            project.mkdir()
+            data = [{"start": 0, "end": 4, "text": "Hello", "speaker": "A"}]
+            for path in [project / "meeting.json", project / "backup.json", root / "meeting.json"]:
+                path.write_text(json.dumps(data), encoding="utf-8")
+            (root / "meeting.txt").touch()
+            (project / "meeting.diarization.json").write_text('{"turns": []}', encoding="utf-8")
+            (root / "broken.json").write_text("broken", encoding="utf-8")
+            (root / "broken.txt").touch()
+            projects = list_transcripts(root)
+            self.assertEqual(len(projects), 1)
+            self.assertEqual(projects[0]["path"], project / "meeting.json")
+
+    def test_main_editor_action_always_opens_project_library(self):
+        app = SimpleNamespace()
+        with patch("transcript_library.open_library") as library, patch("gui_app.filedialog.askopenfilename") as picker:
+            App.open_editor_dialog(app)
+            library.assert_called_once_with(app)
+            picker.assert_not_called()
 
     def test_legacy_gpu_diarization_is_rejected(self):
         with self.assertRaises(ValueError):

@@ -15,11 +15,12 @@ except ImportError:
 class EditorWindow(ctk.CTkToplevel):
     def __init__(self, parent, audio_path, json_path):
         super().__init__(parent)
-        self.title(f"Editor: {Path(audio_path).name}")
+        self.title(f"Editor · {Path(json_path).stem} · Vista por hablante")
         self.transient(parent)
         self.geometry("1000x800")
         
-        self.audio_path = str(audio_path)
+        self.audio_path = str(audio_path) if audio_path else ""
+        self.audio_ready = False
         self.json_path = str(json_path)
         self.bind("<Control-s>", lambda event: self.save_changes() if hasattr(self, "row_widgets") else None)
         self.segments = []
@@ -37,14 +38,16 @@ class EditorWindow(ctk.CTkToplevel):
         self.current_page = 1
         self.items_per_page = 50
         
-        if not PYGAME_AVAILABLE:
-            ctk.CTkLabel(self, text="❌ Pygame no instalado. No se puede reproducir audio.", text_color="red").pack(pady=10)
-        else:
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+        if not PYGAME_AVAILABLE or not self.audio_path or not Path(self.audio_path).is_file():
+            self.after(0, self._open_without_audio)
+            return
+        try:
             pygame.mixer.init()
-            
-            # Protocol to handle X button
-            self.protocol("WM_DELETE_WINDOW", self.on_close)
-            
+        except Exception:
+            self.after(0, self._open_without_audio)
+            return
+        else:
             # --- OVERLAY FOR LOADING (Blocking UI) ---
             self.overlay_frame = ctk.CTkFrame(self, fg_color="#2B2B2B")
             self.overlay_frame.place(relx=0, rely=0, relwidth=1, relheight=1)
@@ -112,9 +115,17 @@ class EditorWindow(ctk.CTkToplevel):
             except Exception as e2:
                 print(f"❌ Error fatal en audio: {e2}")
                 self.after(0, lambda message=str(e2): self.lbl_loading.configure(text=f"❌ Error Audio: {message}", text_color="red"))
-                self.after(0, self.progress_bar.stop)
+                self.after(0, lambda: self._on_load_success(audio_ready=False))
 
-    def _on_load_success(self):
+    def _open_without_audio(self):
+        self.load_data()
+        self.init_main_ui()
+        self.render_rows()
+        self.lbl_status.configure(text="Edición disponible · audio no disponible", text_color="orange")
+        self.lift()
+
+    def _on_load_success(self, audio_ready=True):
+        self.audio_ready = audio_ready
         # Remove Overlay
         self.progress_bar.stop()
         self.overlay_frame.destroy()
@@ -181,6 +192,7 @@ class EditorWindow(ctk.CTkToplevel):
         self.sync_page_to_memory()
         self.stop_audio()
         self.grouped_view = grouped
+        self.view_mode.set("Por hablante" if grouped else "Frase a frase")
         self.expanded_segments.clear()
         self.current_page = 1
         self.render_rows()
@@ -242,9 +254,12 @@ class EditorWindow(ctk.CTkToplevel):
 
         view_bar = ctk.CTkFrame(self)
         view_bar.pack(fill="x", padx=10)
-        ctk.CTkButton(view_bar, text="Agrupar por hablante", command=lambda: self.set_grouping(True)).pack(side="left", padx=8, pady=8)
-        ctk.CTkButton(view_bar, text="Separar todo", command=lambda: self.set_grouping(False)).pack(side="left", padx=8)
-        ctk.CTkLabel(view_bar, text="Para corregir el texto de un bloque, pulsa Editar frases.", text_color="#AAAAAA").pack(side="left", padx=8)
+        self.view_mode = ctk.CTkSegmentedButton(view_bar, values=["Por hablante", "Frase a frase"],
+                                               command=lambda value: self.set_grouping(value == "Por hablante"))
+        self.view_mode.set("Por hablante" if self.grouped_view else "Frase a frase")
+        self.view_mode.pack(side="left", padx=10, pady=10)
+        self.lbl_view_summary = ctk.CTkLabel(view_bar, text="", text_color="#A9B9C6")
+        self.lbl_view_summary.pack(side="left", padx=12)
 
         # Scrollable Area
         self.scroll_frame = ctk.CTkScrollableFrame(self, label_text="Transcripción")
@@ -275,6 +290,10 @@ class EditorWindow(ctk.CTkToplevel):
         self.row_widgets = [] 
         
         blocks = self.display_blocks()
+        mode = "Por hablante" if self.grouped_view else "Frase a frase"
+        detail = f"{len(blocks)} bloques · {len(self.segments)} frases" if self.grouped_view else f"{len(self.segments)} frases separadas"
+        self.lbl_view_summary.configure(text=detail + " · Un intervalo por bloque")
+        self.title(f"Editor · {Path(self.json_path).stem} · {mode}")
         total_pages = max(1, (len(blocks) + self.items_per_page - 1) // self.items_per_page)
         self.current_page = min(self.current_page, total_pages)
         # PAGINATION SLICE
@@ -309,7 +328,7 @@ class EditorWindow(ctk.CTkToplevel):
             start_str = time.strftime('%H:%M:%S', time.gmtime(seg['start']))
             end_str = time.strftime('%H:%M:%S', time.gmtime(seg['end']))
             
-            ts_label = tk.Label(metadata, text=f"[{start_str}-{end_str}]", width=18, bg=BG_COLOR, fg="#AAAAAA", font=("Consolas", 13))
+            ts_label = tk.Label(metadata, text=f"{start_str} → {end_str}", width=23, bg=BG_COLOR, fg="#AAAAAA", font=("Consolas", 13))
             ts_label.pack(side="left", padx=6)
 
             # Play Button (Native)
@@ -317,6 +336,8 @@ class EditorWindow(ctk.CTkToplevel):
                                  font=("Arial", 12, "bold"),
                                  command=lambda s=seg['start'], e=seg['end'], idx=i: self.play_segment(s, e, idx))
             btn_play.pack(side="left", padx=4)
+            if not self.audio_ready:
+                btn_play.configure(state="disabled")
 
             # Speaker (Native Entry)
             speaker_val = seg.get('speaker', 'SPEAKER_00')
@@ -457,7 +478,7 @@ class EditorWindow(ctk.CTkToplevel):
         self.lbl_status.configure(text=f"⚡ {old_name} ➔ {new_name} ({total_changes} cambios)", text_color="cyan")
 
     def play_segment(self, start_sec, end_sec, idx):
-        if not PYGAME_AVAILABLE:
+        if not PYGAME_AVAILABLE or not self.audio_ready:
             return
         
         self.stop_audio()
@@ -505,7 +526,7 @@ class EditorWindow(ctk.CTkToplevel):
         if self.playback_after_id is not None:
             self.after_cancel(self.playback_after_id)
             self.playback_after_id = None
-        if PYGAME_AVAILABLE:
+        if PYGAME_AVAILABLE and self.audio_ready:
             self.is_playing = False
             pygame.mixer.music.stop()
             if hasattr(self, 'btn_stop'):
