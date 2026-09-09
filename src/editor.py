@@ -16,16 +16,22 @@ class EditorWindow(ctk.CTkToplevel):
     def __init__(self, parent, audio_path, json_path):
         super().__init__(parent)
         self.title(f"Editor: {Path(audio_path).name}")
+        self.transient(parent)
         self.geometry("1000x800")
         
         self.audio_path = str(audio_path)
         self.json_path = str(json_path)
+        self.bind("<Control-s>", lambda event: self.save_changes() if hasattr(self, "row_widgets") else None)
         self.segments = []
+        self.grouped_view = True
+        self.expanded_segments = set()
+        self.row_widgets = []
         
 # Audio State
         self.is_playing = False
         self.current_playing_index = -1
         self.stop_playback = threading.Event()
+        self.playback_after_id = None
         
         # Pagination State
         self.current_page = 1
@@ -105,7 +111,7 @@ class EditorWindow(ctk.CTkToplevel):
                 
             except Exception as e2:
                 print(f"❌ Error fatal en audio: {e2}")
-                self.after(0, lambda: self.lbl_loading.configure(text=f"❌ Error Audio: {e2}", text_color="red"))
+                self.after(0, lambda message=str(e2): self.lbl_loading.configure(text=f"❌ Error Audio: {message}", text_color="red"))
                 self.after(0, self.progress_bar.stop)
 
     def _on_load_success(self):
@@ -119,6 +125,8 @@ class EditorWindow(ctk.CTkToplevel):
         # Build Main UI
         self.init_main_ui()
         self.render_rows()
+        self.lift()
+        self.focus_set()
 
     def load_data(self):
         self.load_error = None
@@ -133,7 +141,8 @@ class EditorWindow(ctk.CTkToplevel):
                 raw_data = json.load(f)
             
             # MERGE CONSECUTIVE SEGMENTS (Reader Mode)
-            self.segments = self.merge_consecutive_segments(raw_data)
+            # Preserve original phrase boundaries when opening and saving a project.
+            self.segments = raw_data
                 
             if not self.segments:
                 self.load_error = "El archivo JSON está vacío ([])."
@@ -146,47 +155,62 @@ class EditorWindow(ctk.CTkToplevel):
             self.load_error = f"Error leyendo JSON:\n{e}"
             self.segments = []
 
-    def merge_consecutive_segments(self, data):
-        if not data: return []
-        
-        merged = []
-        current_block = None
-        
-        for seg in data:
-            if current_block is None:
-                current_block = seg.copy()
-                continue
-            
-            # Check if same speaker
-            s1 = current_block.get('speaker', 'UNKNOWN')
-            s2 = seg.get('speaker', 'UNKNOWN')
-            
-            if s1 == s2:
-                # MERGE
-                current_block['end'] = seg['end'] # Extend time
-                # Append text with space
-                t1 = current_block['text'].strip()
-                t2 = seg['text'].strip()
-                current_block['text'] = f"{t1} {t2}"
+    def display_blocks(self):
+        # The view references original phrases; grouping never rewrites timestamps.
+        blocks = []
+        for index, segment in enumerate(self.segments):
+            speaker = segment.get("speaker") or "UNKNOWN"
+            can_join = (
+                self.grouped_view and blocks and speaker.upper() != "UNKNOWN"
+                and blocks[-1]["speaker"] == speaker
+                and segment["start"] - blocks[-1]["end"] <= 3.0
+                and index not in self.expanded_segments
+                and blocks[-1]["indices"][-1] not in self.expanded_segments
+            )
+            if can_join:
+                block = blocks[-1]
+                block["end"] = max(block["end"], segment["end"])
+                block["text"] += " " + segment["text"].strip()
+                block["indices"].append(index)
             else:
-                # Push previous, start new
-                merged.append(current_block)
-                current_block = seg.copy()
-        
-        # Push last
-        if current_block:
-            merged.append(current_block)
-            
-        return merged
+                blocks.append(dict(start=segment["start"], end=segment["end"],
+                                   speaker=speaker, text=segment["text"].strip(), indices=[index]))
+        return blocks
+
+    def set_grouping(self, grouped):
+        self.sync_page_to_memory()
+        self.stop_audio()
+        self.grouped_view = grouped
+        self.expanded_segments.clear()
+        self.current_page = 1
+        self.render_rows()
+        self.scroll_frame._parent_canvas.yview_moveto(0.0)
+        self.lbl_status.configure(text="Vista agrupada" if grouped else "Todas las frases separadas",
+                                  text_color="cyan")
+
+    def split_block(self, indices):
+        self.sync_page_to_memory()
+        self.stop_audio()
+        self.expanded_segments.update(indices)
+        blocks = self.display_blocks()
+        position = next(i for i, block in enumerate(blocks) if indices[0] in block["indices"])
+        self.current_page = position // self.items_per_page + 1
+        self.render_rows()
+        self.scroll_frame._parent_canvas.yview_moveto(0.0)
+        self.lbl_status.configure(text="Bloque separado: ya puedes editar cada frase", text_color="cyan")
 
     def update_statistics(self):
         if not hasattr(self, 'lbl_stats'): return
         
         unique_speakers = set()
         pending_count = 0
+        unassigned_count = 0
         
         for seg in self.segments:
             s = seg.get('speaker', 'UNKNOWN')
+            if not s or s.upper() == "UNKNOWN":
+                unassigned_count += 1
+                continue
             unique_speakers.add(s)
             if "SPEAKER_" in s:
                 pending_count += 1 # Count SEGMENTS pending
@@ -196,7 +220,7 @@ class EditorWindow(ctk.CTkToplevel):
         # Analyze unique pending speakers
         pending_speakers = [s for s in unique_speakers if "SPEAKER_" in s]
         
-        txt = f"👥 Hablantes: {len(unique_speakers)} | ❓ Pendientes: {len(pending_speakers)} IDs ({pending_count} frases)"
+        txt = f"Hablantes: {len(unique_speakers)} · Sin nombre: {len(pending_speakers)} · Sin asignar: {unassigned_count}"
         self.lbl_stats.configure(text=txt)
 
     def init_main_ui(self):
@@ -215,6 +239,12 @@ class EditorWindow(ctk.CTkToplevel):
         # Stats Label (New)
         self.lbl_stats = ctk.CTkLabel(top_frame, text="...", text_color="#AAAAAA")
         self.lbl_stats.pack(side="left", padx=20)
+
+        view_bar = ctk.CTkFrame(self)
+        view_bar.pack(fill="x", padx=10)
+        ctk.CTkButton(view_bar, text="Agrupar por hablante", command=lambda: self.set_grouping(True)).pack(side="left", padx=8, pady=8)
+        ctk.CTkButton(view_bar, text="Separar todo", command=lambda: self.set_grouping(False)).pack(side="left", padx=8)
+        ctk.CTkLabel(view_bar, text="Para corregir el texto de un bloque, pulsa Editar frases.", text_color="#AAAAAA").pack(side="left", padx=8)
 
         # Scrollable Area
         self.scroll_frame = ctk.CTkScrollableFrame(self, label_text="Transcripción")
@@ -244,16 +274,19 @@ class EditorWindow(ctk.CTkToplevel):
 
         self.row_widgets = [] 
         
+        blocks = self.display_blocks()
+        total_pages = max(1, (len(blocks) + self.items_per_page - 1) // self.items_per_page)
+        self.current_page = min(self.current_page, total_pages)
         # PAGINATION SLICE
         start_index = (self.current_page - 1) * self.items_per_page
         end_index = start_index + self.items_per_page
-        visible_segments = self.segments[start_index:end_index]
+        visible_segments = blocks[start_index:end_index]
         
         # Calculate totals for display
-        total_pages = (len(self.segments) + self.items_per_page - 1) // self.items_per_page or 1
+        total_pages = (len(self.display_blocks()) + self.items_per_page - 1) // self.items_per_page or 1
         
         # Info Label
-        ctk.CTkLabel(self.scroll_frame, text=f"📄 Página {self.current_page} de {total_pages} (Filas {start_index+1}-{min(end_index, len(self.segments))})", 
+        ctk.CTkLabel(self.scroll_frame, text=f"📄 Página {self.current_page} de {total_pages} (Filas {start_index+1}-{min(end_index, len(blocks))})",
                      text_color="gray", font=("Arial", 12)).pack(pady=(5, 15))
 
         # Use tk Frame for lighter weight items? No, row container needs to be ctk or tk?
@@ -269,49 +302,60 @@ class EditorWindow(ctk.CTkToplevel):
             row = ctk.CTkFrame(self.scroll_frame, fg_color="transparent") # Transparent to save draw
             row.pack(fill="x", pady=8) # Ultra spacious padding
             
+            metadata = ctk.CTkFrame(row, fg_color="transparent")
+            metadata.pack(fill="x")
+
             # Times (Native Label)
             start_str = time.strftime('%H:%M:%S', time.gmtime(seg['start']))
             end_str = time.strftime('%H:%M:%S', time.gmtime(seg['end']))
             
-            ts_label = tk.Label(row, text=f"[{start_str}-{end_str}]", width=18, bg=BG_COLOR, fg="#AAAAAA", font=("Consolas", 13))
+            ts_label = tk.Label(metadata, text=f"[{start_str}-{end_str}]", width=18, bg=BG_COLOR, fg="#AAAAAA", font=("Consolas", 13))
             ts_label.pack(side="left", padx=6)
 
             # Play Button (Native)
-            btn_play = tk.Button(row, text="▶", width=5, bg="#444", fg="white", relief="flat",
+            btn_play = tk.Button(metadata, text="▶", width=5, bg="#444", fg="white", relief="flat",
                                  font=("Arial", 12, "bold"),
                                  command=lambda s=seg['start'], e=seg['end'], idx=i: self.play_segment(s, e, idx))
             btn_play.pack(side="left", padx=4)
 
             # Speaker (Native Entry)
             speaker_val = seg.get('speaker', 'SPEAKER_00')
-            entry_speaker = tk.Entry(row, width=20, bg=ENTRY_BG, fg=FG_COLOR, insertbackground="white", relief="flat",
+            entry_speaker = tk.Entry(metadata, width=20, bg=ENTRY_BG, fg=FG_COLOR, insertbackground="white", relief="flat",
                                      font=("Arial", 14))
             entry_speaker.insert(0, speaker_val)
             entry_speaker.pack(side="left", padx=6)
 
             # Global Rename Button (Native)
             # FIX: Must pass REAL INDEX (start_index + i), not relative 'i'
-            real_idx_val = start_index + i
-            btn_rename_global = tk.Button(row, text="⚡", width=5, bg="#555", fg="yellow", relief="flat",
+            real_idx_val = seg["indices"][0]
+            btn_rename_global = tk.Button(metadata, text="⚡", width=5, bg="#555", fg="yellow", relief="flat",
                                           font=("Arial", 12, "bold"),
                                           command=lambda idx=real_idx_val: self.rename_global(idx))
             btn_rename_global.pack(side="left", padx=4)
 
+            if len(seg["indices"]) > 1:
+                tk.Button(metadata, text=f"Editar frases ({len(seg['indices'])})", bg="#444", fg="white",
+                          relief="flat", command=lambda indices=seg["indices"]: self.split_block(indices)).pack(side="left", padx=8)
+
             # Text (Native Multiline Text)
             entry_content = tk.Text(row, bg=ENTRY_BG, fg=FG_COLOR, insertbackground="white", relief="flat",
-                                     font=("Segoe UI", 16), height=4, wrap="word") # Multiline!
+                                     font=("Segoe UI", 16), height=min(18, max(3, (len(seg["text"]) + 84) // 85)), wrap="word") # Multiline!
             entry_content.insert("1.0", seg['text'].strip())
-            entry_content.pack(side="left", fill="x", expand=True, padx=10, pady=5) 
+            entry_content.pack(fill="x", expand=True, padx=10, pady=5)
+            if len(seg["indices"]) > 1:
+                entry_content.configure(state="disabled")
 
             self.row_widgets.append({
                 "speaker": entry_speaker,
                 "text": entry_content,
                 "data": seg, 
-                "real_index": start_index + i 
+                "real_index": real_idx_val,
+                "indices": seg["indices"]
             })
             
         # PAGINATION CONTROLS
         self.render_pagination_controls(total_pages)
+        self.update_statistics()
 
     def render_pagination_controls(self, total_pages):
         frame_nav = ctk.CTkFrame(self.scroll_frame, fg_color="transparent")
@@ -344,7 +388,7 @@ class EditorWindow(ctk.CTkToplevel):
     def next_page(self):
         self.sync_page_to_memory()
         # total_pages calc
-        total_pages = (len(self.segments) + self.items_per_page - 1) // self.items_per_page or 1
+        total_pages = (len(self.display_blocks()) + self.items_per_page - 1) // self.items_per_page or 1
         
         if self.current_page < total_pages:
             self.current_page += 1
@@ -353,14 +397,16 @@ class EditorWindow(ctk.CTkToplevel):
             self.scroll_frame._parent_canvas.yview_moveto(0.0)
     
     def sync_page_to_memory(self):
-        # Dump current widget values back to self.segments
-        # Only for loaded widgets
-        for r in self.row_widgets:
-            idx = r["real_index"]
-            if idx < len(self.segments):
-                self.segments[idx]['speaker'] = r["speaker"].get().strip()
-                # Text Widget Get
-                self.segments[idx]['text'] = r["text"].get("1.0", "end-1c").strip()
+        for row in self.row_widgets:
+            indices = row.get("indices", [row["real_index"]])
+            speaker = row["speaker"].get().strip()
+            for index in indices:
+                self.segments[index]["speaker"] = speaker
+            # A paragraph has no new word alignment: edits happen on its original phrases.
+            if len(indices) == 1:
+                value = row["text"].get("1.0", "end-1c").strip()
+                if value != self.segments[indices[0]]["text"].strip():
+                    self.segments[indices[0]]["text"] = value
 
     def rename_global(self, real_idx):
         # CRITICAL FIX: Get OLD name from memory BEFORE syncing!
@@ -414,12 +460,11 @@ class EditorWindow(ctk.CTkToplevel):
         if not PYGAME_AVAILABLE:
             return
         
+        self.stop_audio()
         # Enable Stop button
         if hasattr(self, 'btn_stop'):
             self.btn_stop.configure(state="normal", fg_color="red") # Active Red
 
-        self.stop_audio()
-        
         # Start new thread for playback monitoring
         self.is_playing = True
         self.lbl_status.configure(text=f"Reproduciendo...", text_color="cyan")
@@ -434,11 +479,10 @@ class EditorWindow(ctk.CTkToplevel):
             pygame.mixer.music.play(start=start_sec)
             
             # Monitor stop
-            t = threading.Thread(target=self._monitor_playback, args=(start_sec, end_sec))
-            t.daemon = True
-            t.start()
+            self.playback_after_id = self.after(max(1, int((end_sec - start_sec) * 1000)), self.stop_audio)
         except Exception as e:
             print(f"Play Error: {e}")
+            self.stop_audio()
             self.lbl_status.configure(text="Error reproducción", text_color="red")
 
     def _monitor_playback(self, start, end):
@@ -458,9 +502,14 @@ class EditorWindow(ctk.CTkToplevel):
         # But configure() is often tolerant. Better to not touch UI from thread if possible.
 
     def stop_audio(self):
+        if self.playback_after_id is not None:
+            self.after_cancel(self.playback_after_id)
+            self.playback_after_id = None
         if PYGAME_AVAILABLE:
             self.is_playing = False
             pygame.mixer.music.stop()
+            if hasattr(self, 'btn_stop'):
+                self.btn_stop.configure(state="disabled", fg_color="gray")
             if hasattr(self, 'lbl_status'):
                 self.lbl_status.configure(text="Detenido", text_color="gray")
 
@@ -470,8 +519,17 @@ class EditorWindow(ctk.CTkToplevel):
         
         # 2. Save ALL segments from memory (self.segments)
         try:
-            with open(self.json_path, "w", encoding="utf-8") as f:
-                json.dump(self.segments, f, indent=4, ensure_ascii=False)
+            import tempfile
+            fd, temporary = tempfile.mkstemp(dir=Path(self.json_path).parent, suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(self.segments, f, indent=4, ensure_ascii=False)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(temporary, self.json_path)
+            finally:
+                if os.path.exists(temporary):
+                    os.unlink(temporary)
         except Exception as e:
             print(f"Save JSON Error: {e}")
             self.lbl_status.configure(text="Error guardando JSON", text_color="red")
@@ -483,7 +541,7 @@ class EditorWindow(ctk.CTkToplevel):
         try:
             txt_path = Path(self.json_path).with_suffix(".txt")
             with open(txt_path, "w", encoding="utf-8") as f:
-                for seg in self.segments:
+                for seg in self.display_blocks():
                     start = time.strftime('%H:%M:%S', time.gmtime(seg['start']))
                     end = time.strftime('%H:%M:%S', time.gmtime(seg['end']))
                     text_content = seg['text'].strip()

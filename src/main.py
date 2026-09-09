@@ -9,44 +9,19 @@ import whisper
 from tqdm import tqdm
 from dotenv import load_dotenv
 import time
+import sys
 
-import huggingface_hub
-# MONKEY PATCH: Fix for use_auth_token compatibility
-_original_hub_download = huggingface_hub.hf_hub_download
-def _patched_hub_download(*args, **kwargs):
-    if 'use_auth_token' in kwargs:
-        kwargs['token'] = kwargs.pop('use_auth_token')
-    return _original_hub_download(*args, **kwargs)
-huggingface_hub.hf_hub_download = _patched_hub_download
+# Legacy Windows consoles may not support the emojis used in progress logs.
+for stream in (sys.stdout, sys.stderr):
+    if hasattr(stream, "reconfigure"):
+        stream.reconfigure(errors="backslashreplace")
 
-# MONKEY PATCH 2: FORCE PYANNOTE COMPATIBILITY WITH TORCH 2.1+
-# Pyannote using old 'torchaudio.backend' which was removed in 2.1
-import torchaudio
-if not hasattr(torchaudio, "backend"):
-    # Create a dummy backend module so pyannote doesn't crash on import
-    import types
-    torchaudio.backend = types.ModuleType("backend")
-    torchaudio.backend.common = types.ModuleType("common")
-    # Mock AudioMetaData
-    class AudioMetaData:
-        def __init__(self, sample_rate, num_frames, num_channels, bits_per_sample, encoding):
-            self.sample_rate = sample_rate
-            self.num_frames = num_frames
-            self.num_channels = num_channels
-            self.bits_per_sample = bits_per_sample
-            self.encoding = encoding
-    torchaudio.backend.common.AudioMetaData = AudioMetaData
-
-try:
-    import pyannote.audio.core.io
-    pyannote.audio.core.io.AudioDecoder = None
-except ImportError:
-    pass
-
+# Modern diarization runs in its own environment; no global library patches.
 # Suppress pyannote/speechbrain warnings
 warnings.filterwarnings("ignore")
 # Specific noise from speechbrain about torchaudio backend
 warnings.filterwarnings("ignore", message="This version of torchaudio is old")
+warnings.filterwarnings("ignore", message=".*set_audio_backend has been deprecated.*")
 warnings.filterwarnings("ignore", module="speechbrain")
 
 def setup_device(force_cpu=False):
@@ -55,7 +30,7 @@ def setup_device(force_cpu=False):
     if torch.cuda.is_available():
         gpu_name = torch.cuda.get_device_name(0)
         print(f"✅ GPU detectada: {gpu_name}")
-        torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.benchmark = False
         return "cuda"
     else:
         print("⚠️ GPU no detectada. Usando CPU.")
@@ -98,7 +73,7 @@ def log_resources(interval=2, stop_event=None):
         time.sleep(interval)
 
 
-def diarize_audio(audio_path, hf_token, device="cuda", pipeline=None, debug=False):
+def diarize_audio(audio_path, hf_token, device="cpu", pipeline=None, debug=False, num_speakers=None, cancel_event=None, report_path=None, gpu_profile="efficient", status_callback=None):
     """
     Performs speaker diarization using pyannote.audio
     """
@@ -106,6 +81,17 @@ def diarize_audio(audio_path, hf_token, device="cuda", pipeline=None, debug=Fals
         print("⚠️ No HF Token provided. Skipping diarization.")
         return None
 
+    if device not in ("cpu", "cuda") or (pipeline is not None and device != "cpu"):
+        raise ValueError("La GPU solo se admite mediante el worker Community-1 aislado.")
+    if pipeline is None:
+        from community_runner import run_community
+        report = run_community(audio_path, hf_token, num_speakers=num_speakers, cancel_event=cancel_event, device=device, gpu_profile=gpu_profile, status_callback=status_callback)
+        if report_path:
+            Path(report_path).write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        return report["turns"]
+
+    temp_wav = None
+    previous_threads = torch.get_num_threads()
     if debug:
         print(f"🐛 DEBUG START: Diarization on {device}")
         stop_monitor = threading.Event()
@@ -115,6 +101,8 @@ def diarize_audio(audio_path, hf_token, device="cuda", pipeline=None, debug=Fals
 
     print("👥 Iniciando diarización (identificación de hablantes)...")
     try:
+        if device == "cpu":
+            torch.set_num_threads(min(4, previous_threads))
         # CONVERSION: Ensure audio is WAV (Pyannote/Torchaudio on Windows is picky with m4a/mp3)
         temp_wav = None
         input_path = Path(audio_path)
@@ -137,25 +125,14 @@ def diarize_audio(audio_path, hf_token, device="cuda", pipeline=None, debug=Fals
                            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, startupinfo=startupinfo)
             audio_path = str(temp_wav)
 
-        if pipeline is None:
-            from pyannote.audio import Pipeline
-            # Load pipeline
-            pipeline = Pipeline.from_pretrained(
-                "pyannote/speaker-diarization-3.1",
-                use_auth_token=hf_token
-            )
-            
-            if device == "cuda":
-                pipeline.to(torch.device("cuda"))
-            else:
-                pipeline.to(torch.device("cpu"))
-        else:
-            # If pipeline provided, assuming it's already on correct device
-            pass
+        pipeline.to(torch.device("cpu"))
 
         # Run inference
         print(f"▶ Ejecutando pipeline en {device}...")
-        diarization = pipeline(audio_path)
+        options = {"num_speakers": num_speakers} if num_speakers else {}
+        from threadpoolctl import threadpool_limits
+        with threadpool_limits(limits=4 if device == "cpu" else None):
+            diarization = pipeline(audio_path, **options)
         print("✅ Pipeline finalizado.")
         
         if debug:
@@ -180,6 +157,17 @@ def diarize_audio(audio_path, hf_token, device="cuda", pipeline=None, debug=Fals
         print("💡 Asegúrate de haber aceptado las condiciones en hf.co/pyannote/speaker-diarization-3.1")
         return None
 
+    finally:
+        if device == "cpu":
+            torch.set_num_threads(previous_threads)
+        if debug:
+            stop_monitor.set()
+        if temp_wav and temp_wav.exists():
+            try:
+                temp_wav.unlink()
+            except OSError:
+                pass
+
 def assign_speakers(whisper_segments, diarization):
     """
     Combines Whisper segments with Pyannote diarization.
@@ -191,7 +179,11 @@ def assign_speakers(whisper_segments, diarization):
     full_segments = []
     
     # Pre-calculate speaker turns for faster lookup
-    turns = list(diarization.itertracks(yield_label=True))
+    if isinstance(diarization, list):
+        from types import SimpleNamespace
+        turns = [(SimpleNamespace(start=t["start"], end=t["end"]), None, t["speaker"]) for t in diarization]
+    else:
+        turns = list(diarization.itertracks(yield_label=True))
     
     for seg in whisper_segments:
         start = seg['start']
@@ -308,7 +300,7 @@ def transcribe_file(model, audio_path, output_path, language="es", fp16=True, ve
                 torch.cuda.empty_cache()
                 
             # Perform diarization (Now safe to use GPU for Pyannote)
-            diarization_result = diarize_audio(str(audio_path), hf_token, device="cuda")
+            diarization_result = diarize_audio(str(audio_path), hf_token, device="cpu")
 
             # Restore Whisper
             if original_device.type == "cuda":

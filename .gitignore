@@ -18,3 +18,5 @@ __pycache__/
 *$py.class
 venv/
 .venv/
+.venv-diarization/
+.venv-diarization-gpu/
